@@ -758,7 +758,6 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
             self._fingerprint = generate_fingerprint(self)
 
         # Sanity checks
-
         if self._info.features is None:
             raise ValueError("Features can't be None in a Dataset object")
         if self._fingerprint is None:

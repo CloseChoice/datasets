@@ -101,7 +101,8 @@ class Nifti:
 
     # Automatically constructed
     dtype: ClassVar[str] = "nibabel.nifti1.Nifti1Image"
-    pa_type: ClassVar[Any] = pa.struct({"bytes": pa.binary(), "path": pa.string()})
+    pa_type: ClassVar[Any] = pa.struct({"bytes": pa.large_binary(), "path": pa.string()})
+    # pa_type: ClassVar[Any] = pa.struct({"bytes": pa.binary(), "path": pa.string()})
     _type: str = field(default="Nifti", init=False, repr=False)
 
     def __call__(self):
@@ -219,7 +220,7 @@ class Nifti:
 
         Returns:
             `pa.StructArray`: Array in the NifTI arrow storage type, that is
-                `pa.struct({"bytes": pa.binary(), "path": pa.string()})`.
+                `pa.struct({"bytes": pa.large_binary(), "path": pa.string()})`.
         """
         if token_per_repo_id is None:
             token_per_repo_id = {}
@@ -241,13 +242,24 @@ class Nifti:
                 (path_to_bytes(x["path"]) if x["bytes"] is None else x["bytes"]) if x is not None else None
                 for x in storage.to_pylist()
             ],
-            type=pa.binary(),
+            type=pa.large_binary(),
         )
         path_array = pa.array(
             [os.path.basename(path) if path is not None else None for path in storage.field("path").to_pylist()],
             type=pa.string(),
         )
-        storage = pa.StructArray.from_arrays([bytes_array, path_array], ["bytes", "path"], mask=bytes_array.is_null())
+
+        # Combine chunks if needed (bytes_array is already large_binary from creation)
+        if isinstance(bytes_array, pa.ChunkedArray):
+            bytes_array = bytes_array.combine_chunks()
+
+        # Only combine chunks for path_array (no casting needed)
+        if isinstance(path_array, pa.ChunkedArray):
+            path_array = path_array.combine_chunks()
+
+        mask = bytes_array.is_null()
+
+        storage = pa.StructArray.from_arrays([bytes_array, path_array], ["bytes", "path"], mask=mask)
         return array_cast(storage, self.pa_type)
 
     def flatten(self) -> Union["FeatureType", Dict[str, "FeatureType"]]:
@@ -258,7 +270,7 @@ class Nifti:
             self
             if self.decode
             else {
-                "bytes": Value("binary"),
+                "bytes": Value("large_binary"),
                 "path": Value("string"),
             }
         )
@@ -282,7 +294,7 @@ class Nifti:
                 `pa.struct({"bytes": pa.binary(), "path": pa.string()})`.
         """
         if pa.types.is_string(storage.type):
-            bytes_array = pa.array([None] * len(storage), type=pa.binary())
+            bytes_array = pa.array([None] * len(storage), type=pa.large_binary())
             storage = pa.StructArray.from_arrays([bytes_array, storage], ["bytes", "path"], mask=storage.is_null())
         elif pa.types.is_binary(storage.type):
             path_array = pa.array([None] * len(storage), type=pa.string())
@@ -291,7 +303,7 @@ class Nifti:
             if storage.type.get_field_index("bytes") >= 0:
                 bytes_array = storage.field("bytes")
             else:
-                bytes_array = pa.array([None] * len(storage), type=pa.binary())
+                bytes_array = pa.array([None] * len(storage), type=pa.large_binary())
             if storage.type.get_field_index("path") >= 0:
                 path_array = storage.field("path")
             else:
